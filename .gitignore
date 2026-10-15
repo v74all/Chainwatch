@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Runtime-generated assets (created by utils/create_assets.py)
+assets/
+
+# Logs
+*.log
+logs/
+
+# Cache / model artifacts produced at runtime
+cache/
+models/__pycache__/
+
+# Local env / IDE
+.venv/
+venv/
+.env
+.vscode/
+.idea/

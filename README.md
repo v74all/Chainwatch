@@ -1,4 +1,4 @@
-# ChainWatch Analyzer 1.5 beta
+# ChainWatch Analyzer 1.5.1 beta
 <div dir="rtl">
 
 ## معرفی

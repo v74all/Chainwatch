@@ -12,7 +12,7 @@ import os
 from tqdm import tqdm
 from utils.messages import ERROR_MESSAGES
 
-VERSION = "1.5.0-beta"
+VERSION = "1.5.1-beta"
 BUILD_DATE = "2025"
 
 def check_dependencies():

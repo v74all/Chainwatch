@@ -233,7 +233,7 @@ class EnhancedMLAnalysis:
                     np.random.normal(1000, 100, 15),
                     np.random.normal(10, 1, 15)
                 ]),
-                'timestamp': pd.date_range(start='2024-01-01', periods=50, freq='H')
+                'timestamp': pd.date_range(start='2024-01-01', periods=50, freq='h')
             })
 
             features = self.extract_features(test_data)
