@@ -88,6 +88,132 @@ KNOWN_EXCHES_FILE = 'data/known_exchanges.json'
 FRAUD_PROBABILITY_THRESHOLD = 50
 MAX_DEPTH = 3
 
+
+def _coerce_fraud_entry(entry: Any) -> Tuple[str, Optional[str], float]:
+    """Normalise one fraud-probability entry to (address, blockchain, score).
+
+    Entries may be dicts (as produced by the CLI) or (address, score) tuples
+    (as used by the plotting helpers), so both shapes are accepted here.
+    """
+    if isinstance(entry, dict):
+        address = str(entry.get('address', 'unknown'))
+        blockchain = entry.get('blockchain')
+        try:
+            score = float(entry.get('fraud_probability', entry.get('score', 0)) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        return address, blockchain, score
+    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+        try:
+            score = float(entry[1] or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        return str(entry[0]), None, score
+    return str(entry), None, 0.0
+
+
+def generate_html_report(fraud_probabilities: List[Any],
+                         suspicious_addresses: List[Any]) -> str:
+    """Render a standalone HTML report of fraud probabilities and flagged
+    addresses. Returns the HTML document as a string.
+
+    This is intentionally dependency-free (no templating engine) and escapes
+    all dynamic values so untrusted on-chain data cannot inject markup.
+    """
+    import html as _html
+    from datetime import datetime as _dt
+
+    fraud_probabilities = fraud_probabilities or []
+    suspicious_addresses = suspicious_addresses or []
+
+    def risk_class(score: float) -> str:
+        if score >= FRAUD_PROBABILITY_THRESHOLD:
+            return 'high'
+        if score >= FRAUD_PROBABILITY_THRESHOLD / 2:
+            return 'medium'
+        return 'low'
+
+    rows = []
+    for entry in fraud_probabilities:
+        address, blockchain, score = _coerce_fraud_entry(entry)
+        cls = risk_class(score)
+        rows.append(
+            "<tr class='{cls}'><td class='mono'>{addr}</td>"
+            "<td>{chain}</td><td class='num'>{score:.1f}</td>"
+            "<td><span class='badge {cls}'>{label}</span></td></tr>".format(
+                cls=cls,
+                addr=_html.escape(address),
+                chain=_html.escape(str(blockchain or '—')),
+                score=score,
+                label=cls.upper(),
+            )
+        )
+    if not rows:
+        rows.append("<tr><td colspan='4' class='empty'>No fraud probabilities available.</td></tr>")
+
+    suspicious_items = "".join(
+        f"<li class='mono'>{_html.escape(str(addr))}</li>" for addr in suspicious_addresses
+    ) or "<li class='empty'>No suspicious addresses detected.</li>"
+
+    generated = _html.escape(_dt.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChainWatch Analysis Report</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }}
+  header {{ padding: 24px; background: linear-gradient(135deg, #1b2735, #0f1115); border-bottom: 1px solid #2a2f3a; }}
+  h1 {{ margin: 0; font-size: 22px; }}
+  .meta {{ color: #8a93a2; font-size: 13px; margin-top: 6px; }}
+  main {{ padding: 24px; max-width: 1000px; margin: 0 auto; }}
+  section {{ margin-bottom: 32px; }}
+  h2 {{ font-size: 16px; border-left: 3px solid #4f9dff; padding-left: 10px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+  th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #242a35; }}
+  th {{ color: #8a93a2; font-weight: 600; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }}
+  .empty {{ color: #8a93a2; font-style: italic; }}
+  .badge {{ padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }}
+  .badge.high {{ background: #3a1620; color: #ff6b81; }}
+  .badge.medium {{ background: #3a2f16; color: #ffc94f; }}
+  .badge.low {{ background: #16301f; color: #58d6a0; }}
+  tr.high td {{ background: rgba(255,107,129,0.06); }}
+  ul {{ list-style: none; padding: 0; }}
+  li {{ padding: 8px 12px; border-bottom: 1px solid #242a35; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>ChainWatch Analysis Report</h1>
+  <div class="meta">Generated {generated} &middot; {n_scores} address score(s) &middot; {n_susp} flagged</div>
+</header>
+<main>
+  <section>
+    <h2>Fraud Probabilities</h2>
+    <table>
+      <thead><tr><th>Address</th><th>Blockchain</th><th>Score (0–100)</th><th>Risk</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Suspicious Addresses</h2>
+    <ul>{suspicious}</ul>
+  </section>
+</main>
+</body>
+</html>""".format(
+        generated=generated,
+        n_scores=len(fraud_probabilities),
+        n_susp=len(suspicious_addresses),
+        rows="".join(rows),
+        suspicious=suspicious_items,
+    )
+
 class APIError(Exception):
     pass
 
@@ -1050,7 +1176,12 @@ class ChainWatchAnalyzer:
             },
             'community': {
                 'clustering': nx.average_clustering(G),
-                'components': list(nx.strongly_connected_components(G)),
+                # G is undirected (built via from_pandas_edgelist without
+                # create_using=nx.DiGraph, same as _calculate_risk_metrics),
+                # so connected_components is the applicable notion here;
+                # strongly_connected_components only applies to directed graphs
+                # and raises NetworkXNotImplemented on G as constructed.
+                'components': [list(c) for c in nx.connected_components(G)],
                 'bridges': list(nx.bridges(G)) if nx.is_connected(G) else []
             },
             'flow': {

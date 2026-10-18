@@ -203,17 +203,29 @@ class EnhancedMLAnalysis:
 
             patterns = []
             if 'toAddress' in df.columns and 'amount' in df.columns:
-                grouped = df.groupby('toAddress').agg({
-                    'amount': ['count', 'sum', 'mean', 'std']
-                }).reset_index()
-                
+                # Named aggregation keeps the result columns single-level.
+                # The previous .agg({'amount': [...]}) produced a MultiIndex,
+                # under which row['toAddress'] returns a length-1 Series
+                # (not the scalar address) because 'toAddress' is itself a
+                # top-level key in that MultiIndex — this made every pattern's
+                # 'address' field a non-JSON-serializable Series.
+                grouped = df.groupby('toAddress').agg(
+                    transaction_count=('amount', 'count'),
+                    total_amount=('amount', 'sum'),
+                    avg_amount=('amount', 'mean'),
+                    std_amount=('amount', 'std'),
+                ).reset_index()
+
                 for _, row in grouped.iterrows():
+                    std_amount = row['std_amount']
                     pattern = {
                         'address': row['toAddress'],
-                        'transaction_count': row[('amount', 'count')],
-                        'total_amount': row[('amount', 'sum')],
-                        'avg_amount': row[('amount', 'mean')],
-                        'std_amount': row[('amount', 'std')]
+                        'transaction_count': int(row['transaction_count']),
+                        'total_amount': float(row['total_amount']),
+                        'avg_amount': float(row['avg_amount']),
+                        # std is NaN for single-transaction groups (ddof=1);
+                        # normalize to None instead of a non-standard NaN.
+                        'std_amount': None if pd.isna(std_amount) else float(std_amount),
                     }
                     patterns.append(pattern)
 

@@ -1,4 +1,4 @@
-# ChainWatch Analyzer 1.5.1 beta
+# ChainWatch Analyzer 1.6.0-beta
 <div dir="rtl">
 
 ## معرفی
@@ -34,9 +34,15 @@ ChainWatch is an intelligent blockchain transaction analysis and monitoring tool
 
 ```bash
 git clone https://github.com/v74all/Chainwatch.git
-cd chainwatch
+cd Chainwatch
 pip install -r requirements.txt
 ```
+
+### Screenshot
+
+<p align="center">
+  <img src="docs/screenshots/cli-help.png" width="760" alt="ChainWatch CLI help output">
+</p>
 
 <div dir="rtl">
 
@@ -157,6 +163,22 @@ The program provides analysis output in various formats:
       "total_volume": 1250.45,
       "unique_counterparties": 45
     }
+  }
+}
+```
+
+### `--mode deep` aggregate report
+
+With `--mode deep`, the output also includes an `aggregate_report` section built across every address analyzed in that run: network centrality and clustering, statistical/behavioral anomaly detection, temporal risk patterns, and generated recommendations.
+
+```json
+{
+  "aggregate_report": {
+    "summary": { "total_transactions": 320, "unique_addresses": 18 },
+    "risk_analysis": { "network_risks": { "clustering_coefficient": 0.42 } },
+    "network_analysis": { "flow": { "density": 0.37, "diameter": 3 } },
+    "anomaly_detection": { "behavioral": { "suspicious_addresses": ["0x..."] } },
+    "recommendations": ["Investigate and address blacklist presence"]
   }
 }
 ```

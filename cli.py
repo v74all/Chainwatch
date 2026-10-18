@@ -4,16 +4,18 @@ import sys
 from termcolor import colored
 from typing import Optional, Any
 import json
+import pandas as pd
 from analyzer.analyzer_core import ChainWatchAnalyzer
 from models.modeling import EnhancedMLAnalysis
+from utils.json_utils import ChainJSONEncoder
 import signal
 from importlib.metadata import version, PackageNotFoundError
 import os
 from tqdm import tqdm
 from utils.messages import ERROR_MESSAGES
 
-VERSION = "1.5.1-beta"
-BUILD_DATE = "2025"
+VERSION = "1.6.0-beta"
+BUILD_DATE = "2026"
 
 def check_dependencies():
     package_mapping = {
@@ -260,6 +262,19 @@ async def analyze_addresses(args) -> Optional[dict[str, Any]]:
                 result = await analyzer.analyze_address(address)
                 if result:
                     results.append(result)
+                    # analyze_address returns a per-address dict but does not
+                    # populate analyzer.results, which is what gets saved/printed.
+                    # Aggregate each result here so the final output is not empty.
+                    analyzer.results['transactions'].extend(result.get('transactions', []))
+                    analyzer.results['fraud_probabilities'].append({
+                        'address': result.get('address', address),
+                        'blockchain': result.get('blockchain'),
+                        'fraud_probability': result.get('fraud_probability', 0),
+                    })
+                    if result.get('suspicious'):
+                        analyzer.results['suspicious_addresses'].append(
+                            result.get('address', address)
+                        )
                 if not args.no_progress:
                     pbar.update(1)
             except Exception as e:
@@ -269,6 +284,9 @@ async def analyze_addresses(args) -> Optional[dict[str, Any]]:
         if not args.no_progress:
             pbar.close()
 
+        # Keep the full per-address detail so the JSON report is not lossy.
+        analyzer.results['addresses'] = results
+
         if args.mode == 'deep' and results:
             try:
                 ml_analyzer = EnhancedMLAnalysis(use_multiprocessing=True)
@@ -277,6 +295,33 @@ async def analyze_addresses(args) -> Optional[dict[str, Any]]:
                     analyzer.results['ml_patterns'] = patterns
             except Exception as e:
                 print(colored(f"Error in ML analysis: {e}", "yellow"))
+
+            # ChainWatchAnalyzer.generate_detailed_report() runs network-centrality,
+            # anomaly-detection and recommendation logic that nothing else in the
+            # program calls. Feed it the combined transaction set so --mode deep
+            # actually surfaces that analysis instead of just per-address scores.
+            try:
+                all_txs = []
+                for r in results:
+                    for tx in r.get('transactions', []):
+                        tx_with_chain = dict(tx)
+                        tx_with_chain.setdefault('blockchain', r.get('blockchain'))
+                        all_txs.append(tx_with_chain)
+
+                if len(all_txs) >= 2:
+                    tx_df = pd.DataFrame(all_txs)
+                    tx_df['timestamp'] = pd.to_datetime(tx_df['timestamp'])
+                    tx_df = tx_df.dropna(subset=['ownerAddress', 'toAddress', 'amount', 'blockchain'])
+                    if len(tx_df) >= 2:
+                        report = await analyzer.generate_detailed_report(tx_df)
+                        analyzer.results['aggregate_report'] = json.loads(
+                            json.dumps(report, cls=ChainJSONEncoder)
+                        )
+            except Exception as e:
+                print(colored(f"Error generating aggregate report: {e}", "yellow"))
+                if args.debug:
+                    import traceback
+                    traceback.print_exc()
 
         return analyzer.results
 
